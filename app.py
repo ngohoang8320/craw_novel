@@ -1,56 +1,54 @@
 import os
-import random
-import time
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from crawler.capture_store import flatten_pages, load_captured_chapter
-from crawler.content import ChapterContentFetcher, ContentFetchError, ContentParseError
+from crawler.capture_store import delete_captured_chapter, flatten_pages, load_captured_chapter
 from crawler.toc import TocFetchError, TocParseError, get_table_of_contents
+from ui.confirm_dialog import confirm_dialog
 
 load_dotenv()
 
 DEFAULT_NOVEL_ID = os.getenv("DEFAULT_NOVEL_ID", "")
 
 st.set_page_config(page_title="Bilinovel Crawler", layout="wide")
-st.title("Bilinovel -> EPUB Crawler (nội bộ)")
+st.title("Bilinovel -> EPUB Crawler (internal)")
 
 if "toc" not in st.session_state:
     st.session_state.toc = []
 
-novel_id = st.text_input("Novel ID", value=DEFAULT_NOVEL_ID, placeholder="vd: 4699")
+novel_id = st.text_input("Novel ID", value=DEFAULT_NOVEL_ID, placeholder="e.g. 4699")
 
-fetch_clicked = st.button("Lấy mục lục", type="primary")
+fetch_clicked = st.button("Fetch table of contents", type="primary")
 
 if fetch_clicked:
     if not novel_id.strip():
-        st.error("Vui lòng nhập novel_id.")
+        st.error("Please enter a novel_id.")
     else:
-        with st.spinner(f"Đang lấy mục lục cho novel_id={novel_id}..."):
+        with st.spinner(f"Fetching table of contents for novel_id={novel_id}..."):
             try:
                 toc = get_table_of_contents(novel_id.strip())
-                # Xoá trạng thái checkbox cũ để tránh lẫn giữa các lần lấy mục lục khác nhau
+                # Clear old checkbox state to avoid mixing selections between different fetches
                 for key in list(st.session_state.keys()):
                     if key.startswith("chk_"):
                         del st.session_state[key]
                 st.session_state.toc = toc
-                st.success(f"Đã lấy được {len(toc)} chapter.")
+                st.success(f"Fetched {len(toc)} chapters.")
             except (TocFetchError, TocParseError) as exc:
-                st.error(f"Lỗi khi lấy mục lục: {exc}")
+                st.error(f"Error fetching table of contents: {exc}")
             except ValueError as exc:
                 st.error(str(exc))
 
 if st.session_state.toc:
-    st.subheader(f"Mục lục ({len(st.session_state.toc)} chapter)")
+    st.subheader(f"Table of contents ({len(st.session_state.toc)} chapters)")
 
     col1, col2 = st.columns(2)
-    if col1.button("Chọn tất cả"):
+    if col1.button("Select all"):
         for chapter in st.session_state.toc:
             if not chapter.get("locked"):
                 st.session_state[f"chk_{chapter['chapter_id']}"] = True
         st.rerun()
-    if col2.button("Bỏ chọn tất cả"):
+    if col2.button("Deselect all"):
         for chapter in st.session_state.toc:
             if not chapter.get("locked"):
                 st.session_state[f"chk_{chapter['chapter_id']}"] = False
@@ -70,14 +68,14 @@ if st.session_state.toc:
                 st.checkbox(f"{chapter['order']}. {chapter['title']}", key=key)
 
     with locked_col:
-        st.markdown(f"**⚠️ Chưa xác định link ({len(locked_chapters)})**")
-        st.caption("Mục lục không có href, đã thử suy ra từ chapter liền kề nhưng thất bại")
+        st.markdown(f"**⚠️ Unresolved link ({len(locked_chapters)})**")
+        st.caption("No href in the table of contents, and resolving via the neighboring chapter failed")
         with st.container(height=450):
             if locked_chapters:
                 for chapter in locked_chapters:
                     st.markdown(f"- {chapter['order']}. {chapter['title']}")
             else:
-                st.caption("Không có chapter nào bị thiếu link.")
+                st.caption("No chapters with a missing link.")
 
     selected_count = sum(
         1
@@ -86,83 +84,24 @@ if st.session_state.toc:
     )
     st.markdown("---")
     st.info(
-        f"Đang chọn: **{selected_count}/{len(unlocked_chapters)}** chapter "
-        f"(không tính {len(locked_chapters)} chapter chưa xác định được link)"
+        f"Selected: **{selected_count}/{len(unlocked_chapters)}** chapters "
+        f"(excluding {len(locked_chapters)} chapters with an unresolved link)"
     )
 
     selected_chapters = [
         c for c in unlocked_chapters if st.session_state.get(f"chk_{c['chapter_id']}")
     ]
 
-    st.markdown("---")
-    st.subheader("Crawl nội dung chapter đã chọn")
-    st.caption(
-        "Dùng Playwright (browser thật, không có kỹ thuật né chặn bot). "
-        "Nếu site phát hiện request tự động, chapter đó sẽ hiện trạng thái 'blocked'."
-    )
-    if os.path.isfile(os.path.join(os.path.dirname(__file__), "cookies.local.json")):
-        st.caption("🍪 Đã tìm thấy `cookies.local.json` — sẽ dùng cookie này khi crawl.")
-    else:
-        st.caption(
-            "🍪 Chưa có `cookies.local.json` — crawl không kèm cookie "
-            "(xem README nếu muốn dùng cookie từ trình duyệt thật của bạn)."
-        )
-
-    crawl_clicked = st.button(
-        f"Crawl nội dung ({len(selected_chapters)} chapter đã chọn)",
-        disabled=len(selected_chapters) == 0,
-    )
-
-    if crawl_clicked:
-        results = {}
-        progress = st.progress(0.0)
-        status_text = st.empty()
-
-        try:
-            with ChapterContentFetcher() as fetcher:
-                st.session_state.cookies_loaded_count = fetcher.cookies_loaded_count
-                for idx, chapter in enumerate(selected_chapters, start=1):
-                    status_text.text(
-                        f"Đang crawl [{idx}/{len(selected_chapters)}]: {chapter['title']}"
-                    )
-                    try:
-                        fetched = fetcher.fetch_chapter(chapter["url"])
-                        results[chapter["chapter_id"]] = {
-                            "title": chapter["title"],
-                            "order": chapter["order"],
-                            "page_count": fetched["page_count"],
-                            "paragraph_count": len(fetched["paragraphs"]),
-                            "char_count": sum(len(p) for p in fetched["paragraphs"]),
-                            "blocked": fetched["blocked"],
-                            "paragraphs": fetched["paragraphs"],
-                            "error": None,
-                        }
-                    except (ContentFetchError, ContentParseError) as exc:
-                        results[chapter["chapter_id"]] = {
-                            "title": chapter["title"],
-                            "order": chapter["order"],
-                            "page_count": 0,
-                            "paragraph_count": 0,
-                            "char_count": 0,
-                            "blocked": False,
-                            "paragraphs": [],
-                            "error": str(exc),
-                        }
-                    progress.progress(idx / len(selected_chapters))
-                    time.sleep(random.uniform(0.5, 1.0))
-
-            status_text.empty()
-            st.session_state.crawled_content = results
-            st.success(f"Đã crawl xong {len(selected_chapters)} chapter.")
-        except ValueError as exc:
-            status_text.empty()
-            st.error(f"Lỗi cấu hình cookie: {exc}")
+    if selected_chapters:
+        with st.expander(f"🔗 Links for the {len(selected_chapters)} selected chapters (to open in your browser)"):
+            for chapter in selected_chapters:
+                st.markdown(f"{chapter['order']}. [{chapter['title']}]({chapter['url']})")
 
     st.markdown("---")
-    st.subheader("Nhập nội dung đã capture từ extension")
+    st.subheader("Import content captured by the extension")
     st.caption(
-        "Cài extension trong thư mục extension/ (xem README), chạy `python capture_server.py`, "
-        "rồi tự mở từng chapter đã chọn bằng trình duyệt thật — nội dung sẽ tự động được lưu vào data/."
+        "Load the extension from the extension/ folder (see README), run `python capture_server.py`, "
+        "then open each selected chapter in your real browser — the content is saved to data/ automatically."
     )
 
     capture_rows = [
@@ -171,11 +110,11 @@ if st.session_state.toc:
     captured_count = sum(1 for _, captured in capture_rows if captured)
     complete_count = sum(1 for _, captured in capture_rows if captured and captured.get("is_complete"))
     st.caption(
-        f"Đã capture: {captured_count}/{len(selected_chapters)} chapter đã chọn "
-        f"({complete_count} chapter capture đủ trang)."
+        f"Captured: {captured_count}/{len(selected_chapters)} selected chapters "
+        f"({complete_count} chapters fully captured)."
     )
 
-    if st.button(f"Nạp nội dung đã capture ({captured_count} chapter)", disabled=captured_count == 0):
+    if st.button(f"Import captured content ({captured_count} chapters)", disabled=captured_count == 0):
         results = dict(st.session_state.get("crawled_content") or {})
         for chapter, captured in capture_rows:
             if not captured:
@@ -187,47 +126,55 @@ if st.session_state.toc:
                 "page_count": len(captured.get("pages", {})),
                 "paragraph_count": len(paragraphs),
                 "char_count": sum(len(p) for p in paragraphs),
-                "blocked": False,
                 "paragraphs": paragraphs,
                 "error": None,
             }
         st.session_state.crawled_content = results
-        st.success(f"Đã nạp {captured_count} chapter từ dữ liệu capture.")
+        st.success(f"Imported {captured_count} chapters from captured data.")
 
     if st.session_state.get("crawled_content"):
-        st.markdown("### Kết quả crawl")
-        if "cookies_loaded_count" in st.session_state:
-            st.caption(f"🍪 Đã dùng {st.session_state.cookies_loaded_count} cookie khi crawl lần vừa rồi.")
-        crawled = st.session_state.crawled_content
-        blocked_count = sum(1 for r in crawled.values() if r["blocked"])
-        error_count = sum(1 for r in crawled.values() if r["error"])
+        st.markdown("### Crawl results")
 
-        if blocked_count:
-            st.warning(
-                f"{blocked_count} chapter bị chặn nội dung — site phát hiện request tự động "
-                "và trả về nội dung cắt cụt (xem chi tiết trong từng chapter bên dưới)."
-            )
+        if st.button("🗑️ Clear all crawl results"):
+            st.session_state.crawled_content = {}
+            st.rerun()
+
+        crawled = st.session_state.crawled_content
+        error_count = sum(1 for r in crawled.values() if r["error"])
         if error_count:
-            st.error(f"{error_count} chapter bị lỗi khi crawl (mạng/timeout/không tìm thấy nội dung).")
+            st.error(f"{error_count} chapters failed (no valid captured data found).")
+
+        def _remove_chapter(chapter_id_to_remove: str) -> None:
+            delete_captured_chapter(novel_id.strip(), chapter_id_to_remove)
+            remaining = dict(st.session_state.get("crawled_content") or {})
+            remaining.pop(chapter_id_to_remove, None)
+            st.session_state.crawled_content = remaining
 
         for chapter_id, r in sorted(crawled.items(), key=lambda kv: kv[1]["order"]):
-            if r["error"]:
-                status_icon = "❌"
-            elif r["blocked"]:
-                status_icon = "⚠️"
-            else:
-                status_icon = "✅"
-
+            status_icon = "❌" if r["error"] else "✅"
             label = (
                 f"{status_icon} {r['order']}. {r['title']} — "
-                f"{r['paragraph_count']} đoạn, {r['char_count']} ký tự"
+                f"{r['paragraph_count']} paragraphs, {r['char_count']} chars"
             )
-            with st.expander(label):
-                if r["error"]:
-                    st.error(r["error"])
-                else:
-                    st.caption(f"page_count={r['page_count']} · blocked={r['blocked']}")
-                    for paragraph in r["paragraphs"]:
-                        st.write(paragraph)
+            expander_col, delete_col = st.columns([20, 1])
+            with expander_col:
+                with st.expander(label):
+                    if r["error"]:
+                        st.error(r["error"])
+                    else:
+                        st.caption(f"page_count={r['page_count']}")
+                        for paragraph in r["paragraphs"]:
+                            st.write(paragraph)
+            with delete_col:
+                if st.button("✕", key=f"del_{chapter_id}"):
+                    confirm_dialog(
+                        message=(
+                            f"Delete chapter \"{r['title']}\" from the crawl results? "
+                            "This also removes its captured data file from disk."
+                        ),
+                        on_confirm=lambda cid=chapter_id: _remove_chapter(cid),
+                        confirm_label="Delete",
+                        danger=True,
+                    )
 else:
-    st.caption("Nhập novel_id và bấm 'Lấy mục lục' để bắt đầu.")
+    st.caption("Enter a novel_id and click 'Fetch table of contents' to get started.")

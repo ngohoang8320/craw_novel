@@ -1,10 +1,11 @@
-"""Local HTTP server nhận nội dung chapter do browser extension capture lại.
+"""Local HTTP server that receives chapter content captured by the browser extension.
 
-Extension chỉ đọc DOM của trang bạn đang tự mở bằng trình duyệt thật (không tự
-động hoá việc truy cập trang, không có vấn đề bot-detection nào ở đây) và gửi
-về server này để lưu xuống đĩa, phục vụ build EPUB ở bước sau.
+The extension only reads the DOM of a page you're already viewing in your real
+browser (it doesn't automate visiting pages, so there's no bot-detection concern
+here) and sends it to this server, which saves it to disk for building the EPUB
+in a later step.
 
-Chạy: python capture_server.py
+Run: python capture_server.py
 """
 import json
 import os
@@ -63,7 +64,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         page = payload.get("page", 1)
 
         if not novel_id or not chapter_id or not isinstance(paragraphs, list):
-            self._send_json(400, {"error": "thiếu novel_id/chapter_id/paragraphs"})
+            self._send_json(400, {"error": "missing novel_id/chapter_id/paragraphs"})
             return
 
         path = _chapter_file(novel_id, chapter_id)
@@ -90,7 +91,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         total_paragraphs = sum(len(p) for p in pages.values())
         print(
             f"[capture] novel={novel_id} chapter={chapter_id} page={page} "
-            f"paragraphs_trang_nay={len(paragraphs)} tong_paragraphs={total_paragraphs} "
+            f"paragraphs_this_page={len(paragraphs)} total_paragraphs={total_paragraphs} "
             f"complete={merged['is_complete']}"
         )
 
@@ -99,15 +100,15 @@ class CaptureHandler(BaseHTTPRequestHandler):
         )
 
     def log_message(self, format: str, *args) -> None:
-        pass  # da tu in gon o do_POST, tat log mac dinh cua BaseHTTPRequestHandler
+        pass  # already logged concisely in do_POST; suppress BaseHTTPRequestHandler's default log
 
 
 def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), CaptureHandler)
-    print(f"Capture server đang chạy tại http://127.0.0.1:{PORT}")
-    print(f"Dữ liệu sẽ được lưu vào: {DATA_DIR}")
-    print("Nhấn Ctrl+C để dừng.")
+    print(f"Capture server running at http://127.0.0.1:{PORT}")
+    print(f"Data will be saved to: {DATA_DIR}")
+    print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

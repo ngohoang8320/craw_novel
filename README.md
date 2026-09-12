@@ -1,111 +1,93 @@
-# Bilinovel Crawler (nội bộ)
+# Bilinovel Crawler (internal)
 
-Tool nội bộ, chạy local, crawl truyện từ bilinovel.com để chuẩn bị build EPUB.
+Internal, local-only tool that crawls novels from bilinovel.com to prepare an EPUB build.
 
-## Cài đặt
+## Setup
 
 ```
 pip install -r requirements.txt
-python -m playwright install chromium
 copy .env.example .env
 ```
 
-Sửa `.env` nếu cần (có thể để trống, có giá trị mặc định):
+Edit `.env` if needed (can be left blank, has defaults):
 
 ```
 BASE_URL=https://www.bilinovel.com
 DEFAULT_NOVEL_ID=4699
 ```
 
-## Chạy
+## Run
 
 ```
 streamlit run app.py
 ```
 
-Mở trình duyệt tại địa chỉ Streamlit in ra (mặc định http://localhost:8501).
+Open the URL Streamlit prints (default http://localhost:8501).
 
-## Trạng thái hiện tại
+## Current status
 
-- Nhập `novel_id`, bấm "Lấy mục lục" để lấy danh sách chapter từ
+- Enter a `novel_id`, click "Fetch table of contents" to get the chapter list from
   `https://www.bilinovel.com/novel/{novel_id}/catalog`.
-- Chọn/bỏ chọn chapter bằng checkbox, có nút "Chọn tất cả" / "Bỏ chọn tất cả".
-- Bấm "Crawl nội dung" để lấy nội dung các chapter đã chọn (dùng Playwright).
-  Kết quả từng chapter hiện trạng thái: ✅ OK / ⚠️ bị chặn (`blocked`) / ❌ lỗi.
-- Hoặc dùng **browser extension** (khuyến nghị hơn, xem mục bên dưới) để capture
-  nội dung khi bạn tự đọc bằng trình duyệt thật, rồi bấm "Nạp nội dung đã capture".
-- **Chưa có** chức năng build EPUB (sẽ bổ sung ở phần sau).
+- Select/deselect chapters with checkboxes, with "Select all" / "Deselect all" buttons.
+- Use the **browser extension** (see below) to capture content while reading in
+  your real browser, then click "Import captured content" in the app.
+- **No EPUB build feature yet** (to be added later).
 
-## Cơ chế chống bot của site (quan trọng)
+## Why an extension instead of crawling directly
 
-Trang content của bilinovel.com chạy sau Cloudflare và có cơ chế phát hiện request
-tự động. Khi bị nghi ngờ, trang trả về nội dung **bị cắt cụt** kèm thông báo lỗi
-nhúng sẵn, kể cả khi crawl bằng browser thật (Playwright/Chromium). Tool **không**
-áp dụng kỹ thuật né phát hiện bot (stealth plugin, xoay proxy...).
+The content pages on bilinovel.com run behind Cloudflare and have an automated-
+request detection mechanism: when a request looks suspicious, the page returns
+content that is **truncated and/or has its paragraphs shuffled**, along with an
+embedded error message — even when crawling with a real browser under a tool's
+control (verified with Playwright/Chromium). Because of this, the tool no longer
+crawls automatically; instead, a browser extension reads back the content already
+rendered in the real browser you're using to read — there's nothing for the site
+to detect as a bot.
 
-### Dùng cookie từ trình duyệt thật của bạn (tuỳ chọn)
+### Using the browser extension to capture content
 
-Nếu bạn đã mở chapter bằng trình duyệt thật và trang hiển thị đầy đủ (tức là bạn
-đã tự vượt qua kiểm tra của Cloudflare), bạn có thể tái sử dụng cookie phiên đó:
+**Install the extension (Chrome/Edge):**
+1. Open `chrome://extensions` (or `edge://extensions`).
+2. Enable **Developer mode** (top right).
+3. Click **Load unpacked**, and select the `extension/` folder in this project.
 
-1. Mở DevTools (F12) trên trình duyệt đang xem trang bilinovel.com → tab
-   **Application** (Chrome) hoặc **Storage** (Firefox) → **Cookies** →
-   chọn domain `bilinovel.com`.
-2. Copy các cookie liên quan (đặc biệt `cf_clearance`) vào file
-   `cookies.local.json` ở thư mục gốc project — xem mẫu cấu trúc ở
-   `cookies.local.example.json`.
-3. Chạy lại app — mục "Crawl nội dung" sẽ hiện 🍪 báo đã tìm thấy file cookie.
-
-**Lưu ý:**
-- `cookies.local.json` chứa dữ liệu phiên đăng nhập/xác thực của chính bạn —
-  **không chia sẻ file này**, không commit vào git (đã có trong `.gitignore`).
-- Cookie (đặc biệt `cf_clearance`) có thể hết hạn hoặc gắn với đúng IP đã lấy nó —
-  nếu ngừng hoạt động, lấy lại cookie mới từ trình duyệt.
-- Đây là dùng lại quyền truy cập hợp lệ của chính bạn (bạn đã tự vượt qua kiểm
-  tra bằng trình duyệt thật), không phải kỹ thuật giả mạo tự động.
-
-### Dùng browser extension để capture nội dung (khuyến nghị)
-
-Vì trang bị chặn khi truy cập tự động (kể cả bằng browser thật do Playwright điều
-khiển), cách chắc ăn nhất là đọc lại nội dung ngay trong trình duyệt thật của bạn
-— nơi bạn tự mở trang bình thường, không có gì để chống bot phát hiện cả.
-
-**Cài extension (Chrome/Edge):**
-1. Mở `chrome://extensions` (hoặc `edge://extensions`).
-2. Bật **Developer mode** (góc trên phải).
-3. Bấm **Load unpacked**, chọn thư mục `extension/` trong project này.
-
-**Chạy capture server (ở 1 terminal riêng, để song song với `streamlit run app.py`):**
+**Run the capture server (in a separate terminal, alongside `streamlit run app.py`):**
 ```
 python capture_server.py
 ```
-Server chạy tại `http://127.0.0.1:8765`, dữ liệu capture được lưu vào `data/`.
+The server runs at `http://127.0.0.1:8765`; captured data is saved to `data/`.
 
-**Cách dùng:**
-1. Chạy `streamlit run app.py`, lấy mục lục, chọn chapter như bình thường.
-2. Tự mở từng chapter đã chọn bằng trình duyệt (đã cài extension) — mỗi lần mở 1
-   trang chapter, extension tự đọc nội dung và gửi về server (icon extension hiện
-   badge "OK" màu xanh nếu gửi thành công, "ERR" màu đỏ nếu lỗi — nhớ mở capture
-   server trước).
-3. Với chapter chia nhiều trang, mở lần lượt từng trang (bấm "trang sau" trên
-   web) — extension tự capture từng trang, server tự gộp lại theo đúng thứ tự.
-4. Quay lại Streamlit app, bấm "Nạp nội dung đã capture" để nạp dữ liệu vào tool.
+**How to use it:**
+1. Run `streamlit run app.py`, fetch the table of contents, select chapters as usual.
+2. Open the "🔗 Links for the selected chapters" panel in the app, and click each
+   link to open it in your browser (with the extension installed) — each time a
+   chapter page loads, the extension reads the content and sends it to the
+   server (the extension icon shows a green "OK" badge on success, or a red
+   "ERR" badge on failure — make sure the capture server is running first).
+3. For chapters split across multiple pages, open each page in turn (click
+   "next page" on the site) — the extension captures each page, and the server
+   merges them in the correct order automatically.
+4. Back in the Streamlit app, click "Import captured content" to load the data
+   into the tool.
 
-**Lưu ý:**
-- Extension **không tự động mở trang nào** — chỉ đọc lại trang bạn đang tự xem.
-- `data/` chứa nội dung truyện đã capture, đã có trong `.gitignore` (không commit).
+**Notes:**
+- The extension **never opens any page itself** — it only reads back a page you
+  opened yourself.
+- `data/` holds captured novel content and is already in `.gitignore` (not committed).
 
-## Ghi chú kỹ thuật
+## Technical notes
 
-- `crawler/toc.py` dùng `requests` + `BeautifulSoup` (không cần render JS) để lấy
-  mục lục. Một số chapter không có href trong mục lục (VIP-looking nhưng thực ra
-  không phải VIP) — module tự resolve link thật qua `ReadParams.url_previous`
-  nhúng trong trang content của chapter liền kề.
-- Toàn bộ chapter của 1 truyện (mọi volume) nằm trong 1 trang `/catalog` duy nhất,
-  không phân trang — đã xác nhận với novel_id=4699 (213 chapter).
-- `crawler/content.py` dùng Playwright (cần render JS) để lấy nội dung chapter,
-  tự gộp các trang con nếu chapter bị chia nhiều trang, tự chờ nội dung "ổn định"
-  (poll thay vì chờ cố định) và tự cắt đoạn văn trùng lặp khi nối nhiều trang.
-- Có delay ngẫu nhiên 0.5–1s giữa các request và timeout hợp lý để giảm rủi ro
-  bị chặn IP.
-- Yêu cầu Python 3.9+ (dùng `str.removesuffix`).
+- `crawler/toc.py` uses `requests` + `BeautifulSoup` (no JS rendering needed) to
+  fetch the table of contents. Some chapters have no href in the table of
+  contents (they look VIP-locked but aren't) — the module resolves the real link
+  via `ReadParams.url_previous` embedded in the neighboring chapter's content page.
+- All chapters of a novel (every volume) live on a single `/catalog` page, no
+  pagination — verified with novel_id=4699 (213 chapters).
+- `extension/page_bridge.js` runs in the "main world" (it can read the page's
+  `window.ReadParams`, which a regular isolated-world content script can't see),
+  and dispatches a DOM event that `extension/content.js` (isolated world, has
+  access to `chrome.runtime`) forwards to `background.js`, which sends it to
+  `capture_server.py`.
+- There's a random 0.5-1s delay between requests to the table of contents page,
+  and a reasonable timeout, to reduce the risk of getting IP-blocked.
+- Requires Python 3.9+ (uses `str.removesuffix`).

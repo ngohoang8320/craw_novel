@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 .env
-cookies.local.json
 .venv/
 venv/
 data/

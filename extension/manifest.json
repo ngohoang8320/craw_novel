@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Bilinovel Chapter Capture (nội bộ)",
-  "version": "1.0.0",
-  "description": "Đọc lại nội dung chapter bạn đang xem trên bilinovel.com và gửi về tool local để build EPUB.",
+  "name": "Bilinovel Chapter Capture (internal)",
+  "version": "1.1.0",
+  "description": "Reads the chapter content you're viewing on bilinovel.com and sends it to the local tool to build an EPUB.",
   "host_permissions": [
     "https://www.bilinovel.com/*",
     "http://localhost:8765/*"
@@ -11,6 +11,12 @@
     "service_worker": "background.js"
   },
   "content_scripts": [
+    {
+      "matches": ["https://www.bilinovel.com/novel/*/*.html"],
+      "js": ["page_bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
     {
       "matches": ["https://www.bilinovel.com/novel/*/*.html"],
       "js": ["content.js"],

@@ -1,72 +1,35 @@
-// Chạy trên trang chapter đang mở bằng trình duyệt thật của bạn. Chỉ ĐỌC LẠI
-// nội dung đã render sẵn trên trang (giống như bạn tự xem bằng mắt), không tự
-// điều hướng, không tự động mở trang nào khác.
+// Runs in the "isolated world" (has access to chrome.runtime.*) - can't read
+// window.ReadParams directly, so it only listens for the event dispatched by
+// page_bridge.js (running in the main world), then forwards it to the
+// background script.
 (function () {
-  const CONTENT_SELECTOR = "#acontent p";
-  const STABLE_CHECK_INTERVAL_MS = 400;
-  const STABLE_REQUIRED_CHECKS = 3;
-  const STABLE_MAX_WAIT_MS = 8000;
+  const EVENT_NAME = "bilinovel-capture-ready";
 
-  function getParagraphs() {
-    return Array.from(document.querySelectorAll(CONTENT_SELECTOR))
-      .map((p) => p.innerText.trim())
-      .filter(Boolean);
-  }
+  console.log("[bilinovel-capture] content script (isolated world) ready, listening for", EVENT_NAME);
 
-  function waitForStableContent(callback) {
-    let lastSignature = null;
-    let stableCount = 0;
-    let elapsed = 0;
-
-    const timer = setInterval(() => {
-      const paragraphs = getParagraphs();
-      const signature =
-        paragraphs.length + ":" + paragraphs.reduce((n, p) => n + p.length, 0);
-
-      if (signature === lastSignature) {
-        stableCount += 1;
-      } else {
-        stableCount = 0;
-      }
-      lastSignature = signature;
-      elapsed += STABLE_CHECK_INTERVAL_MS;
-
-      if (stableCount >= STABLE_REQUIRED_CHECKS || elapsed >= STABLE_MAX_WAIT_MS) {
-        clearInterval(timer);
-        callback(getParagraphs());
-      }
-    }, STABLE_CHECK_INTERVAL_MS);
-  }
-
-  function capture() {
-    const params = window.ReadParams;
-    if (!params || !params.chapterid) {
-      return; // khong phai trang chapter hop le (vd trang thong tin volume)
+  document.addEventListener(EVENT_NAME, (event) => {
+    const payload = event.detail;
+    if (!payload) {
+      console.warn("[bilinovel-capture] received event with no payload.");
+      return;
     }
 
-    waitForStableContent((paragraphs) => {
-      if (paragraphs.length === 0) {
+    console.log("[bilinovel-capture] received payload from page_bridge, sending CAPTURE_CHAPTER to background:", {
+      novel_id: payload.novel_id,
+      chapter_id: payload.chapter_id,
+      page: payload.page,
+      paragraph_count: payload.paragraphs ? payload.paragraphs.length : 0,
+    });
+
+    chrome.runtime.sendMessage({ type: "CAPTURE_CHAPTER", payload: payload }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "[bilinovel-capture] sendMessage error (the background script may not be running):",
+          chrome.runtime.lastError.message
+        );
         return;
       }
-
-      const nextHref = params.url_next || "";
-      const nextIdRaw = nextHref.split("/").pop().replace(".html", "");
-      const nextBaseId = nextIdRaw.replace(/_\d+$/, "");
-      const isLastPage = !nextHref || nextBaseId !== params.chapterid;
-
-      const payload = {
-        novel_id: params.articleid,
-        chapter_id: params.chapterid,
-        title: (params.chaptername || "").trim(),
-        page: parseInt(params.page || "1", 10),
-        is_last_page: isLastPage,
-        paragraphs: paragraphs,
-        captured_at: new Date().toISOString(),
-      };
-
-      chrome.runtime.sendMessage({ type: "CAPTURE_CHAPTER", payload: payload });
+      console.log("[bilinovel-capture] background responded:", response);
     });
-  }
-
-  capture();
+  });
 })();
