@@ -1,4 +1,4 @@
-const SERVER_URL = "http://localhost:8765/capture";
+const SERVER_URL = "http://localhost:8000/api/capture";
 
 console.log("[bilinovel-capture] background service worker started, SERVER_URL =", SERVER_URL);
 
@@ -30,7 +30,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
     .catch((err) => {
       console.error(
-        "[bilinovel-capture] fetch to capture_server FAILED (is the server running on port 8765?):",
+        "[bilinovel-capture] fetch to backend FAILED (is the backend running on port 8000?):",
         err
       );
       if (tabId !== undefined) {
