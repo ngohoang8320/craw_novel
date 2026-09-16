@@ -1,3 +1,5 @@
+import { Button } from "./Button";
+
 export interface ConfirmDialogState {
   message: string;
   onConfirm: () => void;
@@ -21,31 +23,20 @@ export function ConfirmDialog({ state, onClose }: ConfirmDialogProps) {
   const { message, onConfirm, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false } = state;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
-        <p className="mb-4 text-sm text-gray-800">{message}</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl dark:bg-gray-800">
+        <p className="mb-5 text-sm text-gray-800 dark:text-gray-200">{message}</p>
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
+          <Button onClick={onClose}>{cancelLabel}</Button>
+          <Button
+            variant={danger ? "danger" : "primary"}
             onClick={() => {
               onConfirm();
               onClose();
             }}
-            className={
-              danger
-                ? "rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
-                : "rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-            }
           >
             {confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

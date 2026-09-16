@@ -6,8 +6,27 @@ export interface Chapter {
   locked: boolean;
 }
 
+export interface VolumeLabel {
+  title: string;
+  before_order: number;
+  cover_url: string | null;
+}
+
 export interface TocResponse {
   chapters: Chapter[];
+  volumes: VolumeLabel[];
+  novel_author: string | null;
+}
+
+export interface ContentItem {
+  type: "text" | "image";
+  text?: string;
+  src?: string;
+  // Set once the image has been downloaded to local disk at capture time -
+  // the frontend doesn't use this directly, just needs to pass it through
+  // unchanged so the EPUB build request (which re-sends these items) can
+  // read the image from disk instead of re-fetching a possibly-dead URL.
+  local_path?: string | null;
 }
 
 export interface CapturedChapter {
@@ -16,9 +35,12 @@ export interface CapturedChapter {
   title?: string | null;
   is_complete?: boolean | null;
   page_count?: number | null;
+  total_pages?: number | null;
+  missing_pages?: number[];
   paragraph_count?: number | null;
+  image_count?: number | null;
   char_count?: number | null;
-  paragraphs?: string[] | null;
+  items?: ContentItem[] | null;
 }
 
 export interface CapturesResponse {
@@ -30,8 +52,12 @@ export interface CrawlResult {
   order: number;
   title: string;
   page_count: number;
+  total_pages: number | null;
+  is_complete: boolean;
+  missing_pages: number[];
   paragraph_count: number;
+  image_count: number;
   char_count: number;
-  paragraphs: string[];
+  items: ContentItem[];
   error: string | null;
 }

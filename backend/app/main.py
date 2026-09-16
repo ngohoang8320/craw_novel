@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS
-from app.routers import capture_ingest, captures, toc
+from app.routers import capture_ingest, captures, epub, image_proxy, toc
 from app.schemas import HealthResponse
 
 app = FastAPI(title="Bilinovel Crawler API")
@@ -17,6 +17,8 @@ app.add_middleware(
 app.include_router(toc.router)
 app.include_router(captures.router)
 app.include_router(capture_ingest.router)
+app.include_router(image_proxy.router)
+app.include_router(epub.router)
 
 
 @app.get("/api/health", response_model=HealthResponse)

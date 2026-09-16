@@ -9,8 +9,28 @@ Table of contents page structure, verified against the real site (novel_id=4699)
                     <span class="chapter-index">Chapter title</span>
                   </a>
                 </li>
-- Each volume's header uses <li class="chapter-bar chapter-li"> (link to vol_xxxx.html)
-  and has no "jsChapter" class, so it doesn't get mixed into the chapter list.
+- Each volume's header uses <li class="chapter-bar chapter-li"><a ...><h3>Volume title</h3></a></li>
+  (link to vol_xxxx.html) and has no "jsChapter" class, so it doesn't get mixed
+  into the chapter list; its <h3> text is extracted separately as a display-only
+  volume label (see `get_table_of_contents`'s "volumes" return value).
+- Right after the header, a <li class="volume-cover chapter-li"> holds the
+  volume's cover image:
+    <li class="volume-cover chapter-li">
+      <a class="volume-cover-img">
+        <img src="/images/book-cover-no.svg" data-src="https://img3.readpai.com/cover/..." class="lazyload" />
+      </a>
+    </li>
+  `src` is always the generic lazyload placeholder graphic, never real content -
+  the actual cover URL is in `data-src` (present in the initial HTML, same as
+  chapter content images). Attached to the preceding volume entry as `cover_url`.
+
+The catalog page's header also has the novel's author:
+    <nav class="btn-group">
+      <h1 class="btn-group-cell book-title ...">Book title</h1>
+      <h2 class="book-author" ...>作者：Author name</h2>
+    </nav>
+`.book-author`'s text is prefixed with the "作者" (author) label and a colon,
+which is stripped off to get just the name.
 
 Some chapters have no real href in the table of contents (href="javascript:cid(...)").
 Verified in practice: these are NOT VIP chapters (the content page embeds a JS
@@ -83,6 +103,20 @@ def _extract_read_params(html: str) -> dict:
     return dict(_READ_PARAMS_FIELD_RE.findall(match.group(1)))
 
 
+_AUTHOR_LABEL_RE = re.compile(r"^作者\s*[:：]\s*")
+
+
+def _extract_novel_author(soup: BeautifulSoup) -> str | None:
+    """Extract the novel's author from the catalog page's book info block
+    (`<h2 class="book-author">作者：Name</h2>`), stripping the "作者" (author)
+    label. Returns None if the element isn't present."""
+    el = soup.select_one(".book-author")
+    if el is None:
+        return None
+    text = _AUTHOR_LABEL_RE.sub("", el.get_text(strip=True)).strip()
+    return text or None
+
+
 def _chapter_id_from_href(href: str) -> str:
     raw = href.rstrip("/").split("/")[-1].removesuffix(".html")
     # href may point to a specific page of a multi-page chapter, e.g. "281554_2"
@@ -139,20 +173,31 @@ def _resolve_missing_chapters(chapters: list[dict], novel_id: str) -> None:
         i = run_end + 1
 
 
-def get_table_of_contents(novel_id: str) -> list[dict]:
+def get_table_of_contents(novel_id: str) -> dict:
     """Fetch the chapter list for a novel on bilinovel.com.
 
     Args:
         novel_id: the novel's id, e.g. "4699".
 
     Returns:
-        list[dict] in the novel's correct reading order, each dict with:
-            - chapter_id (str)
-            - title (str)
-            - url (str, or None if the link could not be determined)
-            - order (int, starting at 1)
-            - locked (bool): True if the real link could not be determined
-              (resolving was attempted but failed), False if it has a valid link.
+        dict with:
+            - "chapters": list[dict] in the novel's correct reading order, each with:
+                - chapter_id (str)
+                - title (str)
+                - url (str, or None if the link could not be determined)
+                - order (int, starting at 1)
+                - locked (bool): True if the real link could not be determined
+                  (resolving was attempted but failed), False if it has a valid link.
+            - "volumes": list[dict], one per volume-header (<h3>) found in the
+              table of contents, display-only (no id/url/action), each with:
+                - title (str): the volume header text.
+                - before_order (int): the "order" of the chapter this header
+                  precedes. A caller rendering chapters should insert this
+                  label immediately before the first chapter whose order is
+                  >= before_order (or at the end, if none is left).
+                - cover_url (str, or None if the volume has no cover image).
+            - "novel_author": str or None - the novel's author, from the
+              catalog page's book info block (None if not present).
 
     Raises:
         ValueError: novel_id is empty.
@@ -176,50 +221,81 @@ def get_table_of_contents(novel_id: str) -> list[dict]:
             "The page structure may have changed, or novel_id doesn't exist."
         )
 
-    chapter_links = container.select("li.chapter-li.jsChapter > a.chapter-li-a")
-    if not chapter_links:
+    li_elements = container.select("li.chapter-li")
+    if not li_elements:
         raise TocParseError(
-            f"No chapters found in the table of contents container on page {url}. "
-            "The selector 'li.chapter-li.jsChapter > a.chapter-li-a' may no longer be correct."
+            f"No entries found in the table of contents container on page {url}. "
+            "The selector 'li.chapter-li' may no longer be correct."
         )
 
     chapters = []
+    volumes = []
     order = 0
-    for a_tag in chapter_links:
-        href = (a_tag.get("href") or "").strip()
-        if not href:
-            continue
 
-        order += 1
-        span = a_tag.select_one("span.chapter-index")
-        title = span.get_text(strip=True) if span else a_tag.get_text(strip=True)
+    for li in li_elements:
+        classes = li.get("class") or []
 
-        if href.startswith("javascript:"):
-            # Fake href, needs resolving later (_resolve_missing_chapters)
+        if "jsChapter" in classes:
+            a_tag = li.select_one("a.chapter-li-a")
+            href = (a_tag.get("href") or "").strip() if a_tag else ""
+            if not href:
+                continue
+
+            order += 1
+            span = a_tag.select_one("span.chapter-index")
+            title = span.get_text(strip=True) if span else a_tag.get_text(strip=True)
+
+            if href.startswith("javascript:"):
+                # Fake href, needs resolving later (_resolve_missing_chapters)
+                chapters.append(
+                    {
+                        "chapter_id": f"unresolved_{order}",
+                        "title": title,
+                        "url": None,
+                        "order": order,
+                        "locked": True,
+                    }
+                )
+                continue
+
+            chapter_id = _chapter_id_from_href(href)
+            chapter_url = f"{BASE_URL}/novel/{novel_id}/{chapter_id}.html"
+
             chapters.append(
                 {
-                    "chapter_id": f"unresolved_{order}",
+                    "chapter_id": chapter_id,
                     "title": title,
-                    "url": None,
+                    "url": chapter_url,
                     "order": order,
-                    "locked": True,
+                    "locked": False,
                 }
             )
-            continue
 
-        chapter_id = _chapter_id_from_href(href)
-        chapter_url = f"{BASE_URL}/novel/{novel_id}/{chapter_id}.html"
+        elif "chapter-bar" in classes:
+            h3 = li.select_one("h3")
+            title = h3.get_text(strip=True) if h3 else ""
+            if title:
+                volumes.append({"title": title, "before_order": order + 1, "cover_url": None})
 
-        chapters.append(
-            {
-                "chapter_id": chapter_id,
-                "title": title,
-                "url": chapter_url,
-                "order": order,
-                "locked": False,
-            }
+        elif "volume-cover" in classes:
+            img = li.select_one("img")
+            cover_src = (img.get("data-src") or "").strip() if img else ""
+            if cover_src and volumes and volumes[-1]["cover_url"] is None:
+                volumes[-1]["cover_url"] = (
+                    cover_src if cover_src.startswith("http") else f"{BASE_URL}{cover_src}"
+                )
+
+        # else: a summary blurb or other decoration - neither a chapter nor
+        # a header/cover we care about, so skip it.
+
+    if not chapters:
+        raise TocParseError(
+            f"No chapters found in the table of contents container on page {url}. "
+            "The selector 'li.chapter-li.jsChapter' may no longer be correct."
         )
 
     _resolve_missing_chapters(chapters, novel_id)
 
-    return chapters
+    novel_author = _extract_novel_author(soup)
+
+    return {"chapters": chapters, "volumes": volumes, "novel_author": novel_author}

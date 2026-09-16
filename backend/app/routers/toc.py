@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/novels", tags=["toc"])
 @router.get("/{novel_id}/toc", response_model=TocResponse)
 def fetch_toc(novel_id: str) -> TocResponse:
     try:
-        chapters = get_table_of_contents(novel_id)
+        result = get_table_of_contents(novel_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TocFetchError as exc:
@@ -17,4 +17,8 @@ def fetch_toc(novel_id: str) -> TocResponse:
     except TocParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return TocResponse(chapters=chapters)
+    return TocResponse(
+        chapters=result["chapters"],
+        volumes=result["volumes"],
+        novel_author=result["novel_author"],
+    )

@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Bilinovel Auto-Pilot (internal)",
+  "version": "0.1.0",
+  "description": "Automatically advances through selected chapters/pages on bilinovel.com after the capture extension saves each page, using randomized human-like delays.",
+  "host_permissions": [
+    "https://www.bilinovel.com/*",
+    "http://localhost:8000/*",
+    "http://localhost:5173/*"
+  ],
+  "permissions": ["storage"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:5173/*"],
+      "js": ["webapp_bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.bilinovel.com/novel/*/*.html"],
+      "js": ["page_bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.bilinovel.com/novel/*/*.html"],
+      "js": ["autopilot.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bilinovel Auto-Pilot",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

@@ -14,8 +14,12 @@ Terminal 1 (backend, port 8000):
 cd backend
 pip install -r requirements.txt
 copy .env.example .env
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
+
+(`uvicorn` is the ASGI server that runs the FastAPI app — FastAPI has no
+built-in `python app.py` entry point. Running it as `python -m uvicorn` works
+regardless of whether Python's Scripts directory is on PATH.)
 
 Terminal 2 (frontend, port 5173):
 ```

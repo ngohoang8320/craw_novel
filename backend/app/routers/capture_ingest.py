@@ -6,32 +6,39 @@ of the API.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 
-from app.crawler.capture_store import save_captured_page
+from app.crawler.capture_store import download_page_images, save_captured_page
 from app.schemas import CaptureIngestRequest, CaptureIngestResponse
 
 router = APIRouter(prefix="/api", tags=["capture-ingest"])
 
 
 @router.post("/capture", response_model=CaptureIngestResponse)
-def ingest_capture(payload: CaptureIngestRequest) -> CaptureIngestResponse:
+def ingest_capture(payload: CaptureIngestRequest, background_tasks: BackgroundTasks) -> CaptureIngestResponse:
     captured_at = payload.captured_at or datetime.now(timezone.utc).isoformat()
+
+    items = [item.model_dump() for item in payload.items]
 
     merged = save_captured_page(
         novel_id=payload.novel_id,
         chapter_id=payload.chapter_id,
         page=payload.page,
-        paragraphs=payload.paragraphs,
+        items=items,
         title=payload.title,
         is_last_page=payload.is_last_page,
         captured_at=captured_at,
+        total_pages=payload.total_pages,
     )
 
-    total_paragraphs = sum(len(p) for p in merged["pages"].values())
+    # Runs after this response is sent - never adds latency to the capture
+    # itself (Auto-Pilot's page-to-page timing depends on a prompt response).
+    background_tasks.add_task(download_page_images, payload.novel_id, payload.chapter_id, payload.page)
+
+    total_items = sum(len(p) for p in merged["pages"].values())
     print(
         f"[capture] novel={payload.novel_id} chapter={payload.chapter_id} page={payload.page} "
-        f"paragraphs_this_page={len(payload.paragraphs)} total_paragraphs={total_paragraphs} "
+        f"items_this_page={len(items)} total_items={total_items} "
         f"complete={merged['is_complete']}"
     )
 

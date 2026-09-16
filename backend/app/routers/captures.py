@@ -4,6 +4,7 @@ from app.crawler.capture_store import (
     delete_captured_chapter,
     flatten_pages,
     load_captured_chapter,
+    missing_pages,
 )
 from app.schemas import CapturedChapter, CapturesResponse, DeleteCaptureResponse
 
@@ -21,7 +22,9 @@ def get_captures(novel_id: str, chapter_ids: str = Query(..., description="Comma
             results.append(CapturedChapter(chapter_id=chapter_id, captured=False))
             continue
 
-        paragraphs = flatten_pages(captured)
+        items = flatten_pages(captured)
+        text_items = [item for item in items if item["type"] == "text"]
+        image_items = [item for item in items if item["type"] == "image"]
         results.append(
             CapturedChapter(
                 chapter_id=chapter_id,
@@ -29,9 +32,12 @@ def get_captures(novel_id: str, chapter_ids: str = Query(..., description="Comma
                 title=captured.get("title", ""),
                 is_complete=captured.get("is_complete", False),
                 page_count=len(captured.get("pages", {})),
-                paragraph_count=len(paragraphs),
-                char_count=sum(len(p) for p in paragraphs),
-                paragraphs=paragraphs,
+                total_pages=captured.get("total_pages"),
+                missing_pages=missing_pages(captured),
+                paragraph_count=len(text_items),
+                image_count=len(image_items),
+                char_count=sum(len(item["text"]) for item in text_items),
+                items=items,
             )
         )
 
