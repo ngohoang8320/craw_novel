@@ -39,7 +39,9 @@ doesn't render the link, but the content page of the following chapter has
 `ReadParams.url_previous` pointing to the missing one. This module automatically
 fetches the content page of the following chapter (walking further back if
 several chapters are missing in a row) to recover the real link, instead of
-incorrectly labeling it "locked".
+incorrectly labeling it "locked". A missing chapter at the very end of the
+novel has no following chapter to read from, so its link is taken from the
+catalog page's `og:novel:latest_chapter_url` meta instead.
 """
 import os
 import random
@@ -123,16 +125,23 @@ def _chapter_id_from_href(href: str) -> str:
     return _PAGE_SUFFIX_RE.sub("", raw)
 
 
-def _resolve_missing_chapters(chapters: list[dict], novel_id: str) -> None:
+def _resolve_missing_chapters(
+    chapters: list[dict], novel_id: str, latest_chapter_href: str | None = None
+) -> None:
     """Recover the real url/chapter_id for chapters with no href in the table of
     contents, by reading `ReadParams.url_previous` from the content page of the
     following chapter (walking further back if several chapters are missing in
     a row).
 
+    A missing run at the very END of the novel has no following chapter to
+    anchor from. For that case, `latest_chapter_href` - the catalog page's own
+    `og:novel:latest_chapter_url` meta, which always names the novel's real
+    last chapter - is used as the anchor for the final chapter, and the rest
+    of the run (if any) is then walked back from it like usual.
+
     Mutates the dicts in `chapters` in place. If resolving fails (network error,
-    or the missing chapter is at the very end of the novel with nothing after
-    it to anchor from), leaves "locked": True to signal that the link could
-    not be determined.
+    or a trailing missing run with no `latest_chapter_href` available), leaves
+    "locked": True to signal that the link could not be determined.
     """
     n = len(chapters)
     i = 0
@@ -147,7 +156,27 @@ def _resolve_missing_chapters(chapters: list[dict], novel_id: str) -> None:
             run_end += 1
         # chapters[run_end] is the first chapter with a known link right after the
         # missing run (if run_end == n, the missing run is at the end of the novel,
-        # with nothing to anchor from)
+        # with nothing after it to read url_previous from)
+
+        latest_chapter_id = _chapter_id_from_href(latest_chapter_href) if latest_chapter_href else None
+        # Guard: the meta must point at a chapter not already in the list -
+        # if it names one we already resolved, it isn't the missing chapter
+        # (e.g. stale/mismatched meta), so don't assign a duplicate id.
+        if (
+            run_end == n
+            and latest_chapter_id
+            and all(c["chapter_id"] != latest_chapter_id for c in chapters)
+        ):
+            last = n - 1
+            chapter_id = latest_chapter_id
+            chapters[last]["chapter_id"] = chapter_id
+            chapters[last]["url"] = f"{BASE_URL}/novel/{novel_id}/{chapter_id}.html"
+            chapters[last]["locked"] = False
+            # The rest of the run (if any) can now be walked back from this
+            # anchor, same as a run in the middle of the novel.
+            run_end = last
+            if run_start == last:
+                break
 
         if run_end < n:
             current_url = chapters[run_end]["url"]
@@ -294,7 +323,13 @@ def get_table_of_contents(novel_id: str) -> dict:
             "The selector 'li.chapter-li.jsChapter' may no longer be correct."
         )
 
-    _resolve_missing_chapters(chapters, novel_id)
+    # The catalog page's own <meta property="og:novel:latest_chapter_url"> names
+    # the novel's real last chapter - the only way to recover it when its
+    # table-of-contents href is a fake "javascript:cid(...)" link.
+    latest_meta = soup.select_one('meta[property="og:novel:latest_chapter_url"]')
+    latest_chapter_href = (latest_meta.get("content") or "").strip() if latest_meta else None
+
+    _resolve_missing_chapters(chapters, novel_id, latest_chapter_href or None)
 
     novel_author = _extract_novel_author(soup)
 
