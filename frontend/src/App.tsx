@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildEpub, deleteCapture, fetchCaptures, fetchToc } from "./api/client";
+import {
+  buildEpub,
+  deleteCapture,
+  fetchCaptures,
+  fetchToc,
+  forgetRecoveredLink,
+  setManualChapterLink,
+} from "./api/client";
 import { CaptureImportPanel } from "./components/CaptureImportPanel";
 import { ChapterList } from "./components/ChapterList";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -63,6 +70,58 @@ function App() {
     } finally {
       setFetchLoading(false);
     }
+  }
+
+  // Re-runs the table-of-contents fetch IN PLACE - unlike "Fetch", it keeps
+  // the selection, captured status and imported results. Links recovered on
+  // earlier fetches are remembered by the backend, so this only retries the
+  // chapters that are still unresolved (and can only add links, never lose
+  // one).
+  async function handleRetryUnresolved() {
+    const { chapters, volumes, novel_author } = await fetchToc(loadedNovelId);
+    setToc(chapters);
+    setVolumes(volumes);
+    setNovelAuthor(novel_author ?? "");
+  }
+
+  async function handleSetManualLink(chapter: Chapter, link: string) {
+    // Same extraction the backend does (last number before an optional _page /
+    // .html) - used only to catch a link that duplicates another chapter
+    // before it gets remembered; the backend still validates the link itself.
+    const idMatch = link.match(/(\d+)(?:_\d+)?(?:\.html)?\/?\s*$/);
+    if (idMatch && toc.some((c) => c.order !== chapter.order && c.chapter_id === idMatch[1])) {
+      throw new Error("Another chapter in this table of contents already uses that link.");
+    }
+    const { chapter_id, url } = await setManualChapterLink(loadedNovelId, chapter.order, chapter.title, link);
+    setToc((prev) =>
+      prev.map((c) =>
+        c.order === chapter.order ? { ...c, chapter_id, url, locked: false, recovered: true } : c,
+      ),
+    );
+  }
+
+  // Discards a recovered/manual link: the chapter goes back to unresolved
+  // (Retry or a manual link can then redo it). Captured data already saved
+  // for that chapter_id is left alone.
+  async function handleForgetRecovered(chapter: Chapter) {
+    try {
+      await forgetRecoveredLink(loadedNovelId, chapter.chapter_id);
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setToc((prev) =>
+      prev.map((c) =>
+        c.chapter_id === chapter.chapter_id
+          ? { ...c, chapter_id: `unresolved_${c.order}`, url: null, locked: true, recovered: false }
+          : c,
+      ),
+    );
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(chapter.chapter_id);
+      return next;
+    });
   }
 
   function toggleChapter(chapterId: string) {
@@ -264,13 +323,28 @@ function App() {
                   onDeselectAll={deselectAll}
                   onSelectGroup={selectGroup}
                   onDeselectGroup={deselectGroup}
+                  onForgetRecovered={(chapter) =>
+                    confirm({
+                      message: `Discard the recovered link for "${chapter.title}"? It goes back to Unresolved - use Retry to recover it again, or enter its link by hand. Any content already captured for it stays on disk.`,
+                      onConfirm: () => handleForgetRecovered(chapter),
+                      confirmLabel: "Discard link",
+                      danger: true,
+                    })
+                  }
                 />
-                <LockedChaptersPanel chapters={lockedChapters} volumes={volumes} displayNumbers={displayNumbers} />
+                <LockedChaptersPanel
+                  chapters={lockedChapters}
+                  volumes={volumes}
+                  displayNumbers={displayNumbers}
+                  onRetry={handleRetryUnresolved}
+                  onSetLink={handleSetManualLink}
+                />
               </div>
 
               {lockedChapters.length > 0 && (
                 <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-                  {lockedChapters.length} chapters excluded (unresolved link).
+                  {lockedChapters.length} chapters excluded (unresolved link) - use Retry, or enter the link by hand
+                  (🔗), in the Unresolved panel.
                 </p>
               )}
 

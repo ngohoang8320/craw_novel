@@ -10,6 +10,27 @@ class Chapter(BaseModel):
     url: str | None
     order: int
     locked: bool
+    # True if the link wasn't in the catalog page itself but was recovered,
+    # remembered from an earlier fetch, or entered by hand.
+    recovered: bool = False
+
+
+class ManualLinkRequest(BaseModel):
+    """A chapter link/id typed in by hand for a chapter that couldn't be
+    resolved. `title` is the chapter's title in the table of contents - stored
+    with the link so it's only reused for that same chapter later."""
+
+    title: str
+    link: str
+
+
+class ManualLinkResponse(BaseModel):
+    chapter_id: str
+    url: str
+
+
+class ForgetRecoveredResponse(BaseModel):
+    deleted: bool
 
 
 class VolumeLabel(BaseModel):

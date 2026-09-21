@@ -52,6 +52,8 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+from app.crawler import toc_cache
+
 load_dotenv()
 
 BASE_URL = os.getenv("BASE_URL", "https://www.bilinovel.com").rstrip("/")
@@ -123,6 +125,55 @@ def _chapter_id_from_href(href: str) -> str:
     raw = href.rstrip("/").split("/")[-1].removesuffix(".html")
     # href may point to a specific page of a multi-page chapter, e.g. "281554_2"
     return _PAGE_SUFFIX_RE.sub("", raw)
+
+
+# A chapter link typed in by hand: a bare id ("47565"), a filename
+# ("47565.html", "47565_2.html"), a path ("/novel/1222/47565.html") or a full
+# URL. Anything else (e.g. a "vol_47523.html" volume page) doesn't match.
+_MANUAL_LINK_RE = re.compile(
+    r"^(?:https?://[^/\s]+)?(?:/novel/(?P<novel>\d+)/)?(?P<chapter>\d+)(?:_\d+)?(?:\.html)?/?$"
+)
+
+
+def chapter_id_from_manual_link(novel_id: str, link: str) -> str:
+    """Extract the chapter_id from a link/id typed in by hand.
+
+    Raises:
+        ValueError: `link` isn't a recognizable chapter link, or points at a
+            different novel than `novel_id`.
+    """
+    match = _MANUAL_LINK_RE.match(link.strip())
+    if not match:
+        raise ValueError(
+            'Not a chapter link. Use a chapter id ("47565") or a chapter URL '
+            '("https://www.bilinovel.com/novel/1222/47565.html").'
+        )
+    if match.group("novel") and match.group("novel") != str(novel_id):
+        raise ValueError(f"That link is for novel {match.group('novel')}, not novel {novel_id}.")
+    return match.group("chapter")
+
+
+def _apply_recovered_cache(chapters: list[dict], cached: dict[int, dict]) -> None:
+    """Fill still-locked chapters from links recovered on a previous fetch
+    (see `toc_cache`), so they don't have to be recovered over the network
+    again. An entry is only applied if the chapter at that `order` still has
+    the same title, and never if its chapter_id is already taken by another
+    chapter (e.g. the site has since put a real link in the catalog)."""
+    used_ids = {c["chapter_id"] for c in chapters if not c["locked"]}
+    for chapter in chapters:
+        if not chapter["locked"]:
+            continue
+        entry = cached.get(chapter["order"])
+        if not entry or entry.get("title") != chapter["title"]:
+            continue
+        chapter_id = entry.get("chapter_id")
+        if not chapter_id or chapter_id in used_ids:
+            continue
+        chapter["chapter_id"] = chapter_id
+        chapter["url"] = entry["url"]
+        chapter["locked"] = False
+        chapter["recovered"] = True
+        used_ids.add(chapter_id)
 
 
 def _resolve_missing_chapters(
@@ -217,6 +268,9 @@ def get_table_of_contents(novel_id: str) -> dict:
                 - order (int, starting at 1)
                 - locked (bool): True if the real link could not be determined
                   (resolving was attempted but failed), False if it has a valid link.
+                - recovered (bool): True if the link did not come straight from
+                  the catalog page but was recovered (or remembered from an
+                  earlier fetch, or entered by hand - see `toc_cache`).
             - "volumes": list[dict], one per volume-header (<h3>) found in the
               table of contents, display-only (no id/url/action), each with:
                 - title (str): the volume header text.
@@ -283,6 +337,7 @@ def get_table_of_contents(novel_id: str) -> dict:
                         "url": None,
                         "order": order,
                         "locked": True,
+                        "recovered": False,
                     }
                 )
                 continue
@@ -297,6 +352,7 @@ def get_table_of_contents(novel_id: str) -> dict:
                     "url": chapter_url,
                     "order": order,
                     "locked": False,
+                    "recovered": False,
                 }
             )
 
@@ -329,7 +385,31 @@ def get_table_of_contents(novel_id: str) -> dict:
     latest_meta = soup.select_one('meta[property="og:novel:latest_chapter_url"]')
     latest_chapter_href = (latest_meta.get("content") or "").strip() if latest_meta else None
 
+    # Reuse links recovered on earlier fetches first, so only the chapters
+    # that are STILL missing cost network requests - and so a chapter that
+    # was recovered once can't disappear again because of a flaky request.
+    _apply_recovered_cache(chapters, toc_cache.load_recovered(novel_id))
+    still_locked_orders = {c["order"] for c in chapters if c["locked"]}
+
     _resolve_missing_chapters(chapters, novel_id, latest_chapter_href or None)
+
+    # Remember whatever was recovered just now (skipping any chapter_id that
+    # ended up on more than one chapter - that link can't be trusted).
+    id_counts: dict[str, int] = {}
+    for c in chapters:
+        id_counts[c["chapter_id"]] = id_counts.get(c["chapter_id"], 0) + 1
+    newly_recovered = {}
+    for c in chapters:
+        if c["order"] in still_locked_orders and not c["locked"]:
+            c["recovered"] = True
+            if id_counts[c["chapter_id"]] == 1:
+                newly_recovered[c["order"]] = {
+                    "title": c["title"],
+                    "chapter_id": c["chapter_id"],
+                    "url": c["url"],
+                    "manual": False,
+                }
+    toc_cache.remember(novel_id, newly_recovered)
 
     novel_author = _extract_novel_author(soup)
 

@@ -4,6 +4,9 @@ export interface Chapter {
   url: string | null;
   order: number;
   locked: boolean;
+  // True if the link wasn't in the catalog page itself but was recovered,
+  // remembered from an earlier fetch, or entered by hand.
+  recovered: boolean;
 }
 
 export interface VolumeLabel {

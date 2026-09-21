@@ -11,6 +11,7 @@ interface ChapterListProps {
   onDeselectAll: () => void;
   onSelectGroup: (chapterIds: string[]) => void;
   onDeselectGroup: (chapterIds: string[]) => void;
+  onForgetRecovered: (chapter: Chapter) => void;
 }
 
 interface VolumeRow {
@@ -72,6 +73,7 @@ export function ChapterList({
   onDeselectAll,
   onSelectGroup,
   onDeselectGroup,
+  onForgetRecovered,
 }: ChapterListProps) {
   const rows = buildRows(chapters, volumes);
 
@@ -112,20 +114,41 @@ export function ChapterList({
               </span>
             </div>
           ) : (
-            <label
+            <div
               key={row.chapter.chapter_id}
-              className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-gray-50 dark:hover:bg-gray-700"
+              className="flex items-center gap-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
             >
-              <input
-                type="checkbox"
-                checked={selectedIds.has(row.chapter.chapter_id)}
-                onChange={() => onToggle(row.chapter.chapter_id)}
-                className="h-4 w-4 accent-blue-600"
-              />
-              <span>
-                {displayNumbers.get(row.chapter.chapter_id) ?? row.chapter.order}. {row.chapter.title}
-              </span>
-            </label>
+              <label className="flex flex-1 cursor-pointer items-center gap-2 px-1 py-1 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(row.chapter.chapter_id)}
+                  onChange={() => onToggle(row.chapter.chapter_id)}
+                  className="h-4 w-4 accent-blue-600"
+                />
+                <span>
+                  {displayNumbers.get(row.chapter.chapter_id) ?? row.chapter.order}. {row.chapter.title}
+                </span>
+                {row.chapter.recovered && (
+                  <span
+                    className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                    title="This chapter's link wasn't in the catalog page - it was recovered (or entered by hand) and is remembered for later fetches."
+                  >
+                    recovered
+                  </span>
+                )}
+              </label>
+              {row.chapter.recovered && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Discard this recovered link (the chapter goes back to Unresolved)"
+                  onClick={() => onForgetRecovered(row.chapter)}
+                  className="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                >
+                  ✕
+                </Button>
+              )}
+            </div>
           ),
         )}
       </div>

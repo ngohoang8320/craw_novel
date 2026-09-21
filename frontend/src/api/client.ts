@@ -19,6 +19,34 @@ export async function fetchToc(novelId: string): Promise<TocResponse> {
   return handleResponse<TocResponse>(res);
 }
 
+/** Supplies the link for a chapter that couldn't be resolved automatically
+ * (`link` is a chapter id or chapter URL). The backend remembers it, so later
+ * fetches keep using it. */
+export async function setManualChapterLink(
+  novelId: string,
+  order: number,
+  title: string,
+  link: string,
+): Promise<{ chapter_id: string; url: string }> {
+  const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}/toc-cache/${order}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, link }),
+  });
+  return handleResponse<{ chapter_id: string; url: string }>(res);
+}
+
+/** Drops a remembered (recovered or manual) chapter link - the chapter goes
+ * back to unresolved. */
+export async function forgetRecoveredLink(novelId: string, chapterId: string): Promise<boolean> {
+  const res = await fetch(
+    `/api/novels/${encodeURIComponent(novelId)}/toc-cache/${encodeURIComponent(chapterId)}`,
+    { method: "DELETE" },
+  );
+  const data = await handleResponse<{ deleted: boolean }>(res);
+  return data.deleted;
+}
+
 export async function fetchCaptures(
   novelId: string,
   chapterIds: string[],
