@@ -317,7 +317,16 @@ def get_table_of_contents(novel_id: str) -> dict:
             "The page structure may have changed, or novel_id doesn't exist."
         )
 
-    li_elements = container.select("li.chapter-li")
+    # Collected from the WHOLE document, not scoped to `container` - some
+    # novels' catalog pages (verified on novel_id=2951) have a markup bug in
+    # the site's own template: the chapters before the first titled volume
+    # (e.g. an illustration/prologue with no volume header) are followed by a
+    # stray closing "</ul></div>" with no matching opening tag. Both
+    # html.parser and lxml interpret that as closing #volumes itself early,
+    # which would silently drop every chapter after it if this selected from
+    # `container`. `li.chapter-li` is specific enough to this page's table of
+    # contents that scoping to the document instead is safe.
+    li_elements = soup.select("li.chapter-li")
     if not li_elements:
         raise TocParseError(
             f"No entries found in the table of contents container on page {url}. "
