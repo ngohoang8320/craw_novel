@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNovelToc } from "../hooks/useNovelToc";
 import { syncAutopilotQueue } from "../lib/autopilotBridge";
 import type { Chapter, VolumeLabel } from "../types";
+import { Button } from "./Button";
 import type { ConfirmDialogState } from "./ConfirmDialog";
 import { NovelWorkspace } from "./NovelWorkspace";
 
@@ -42,11 +43,22 @@ export function BatchNovelDetail({ novelId, confirm, onTocChange }: BatchNovelDe
   }, [novel.toc, novel.volumes, novel.novelAuthor, novel.novelTitle]);
 
   if (novel.loading && novel.toc.length === 0) {
-    return <p className="border-t border-gray-200 pt-3 text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">Loading...</p>;
+    return (
+      <p className="border-t border-gray-200 pt-3 text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
+        Loading...
+      </p>
+    );
   }
 
   if (novel.error && novel.toc.length === 0) {
-    return <p className="border-t border-gray-200 pt-3 text-sm text-red-600 dark:border-gray-700 dark:text-red-400">{novel.error}</p>;
+    return (
+      <div className="flex items-center justify-between gap-2 border-t border-gray-200 pt-3 dark:border-gray-700">
+        <p className="text-sm text-red-600 dark:text-red-400">{novel.error}</p>
+        <Button size="sm" onClick={novel.reload}>
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   if (novel.toc.length === 0) {

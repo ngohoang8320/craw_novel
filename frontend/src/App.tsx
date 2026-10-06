@@ -26,12 +26,20 @@ function App() {
   const novel = useNovelToc(loadedNovelId);
 
   function handleFetchToc() {
-    if (!novelIdInput.trim()) {
+    const trimmed = novelIdInput.trim();
+    if (!trimmed) {
       setFetchError("Please enter a novel_id.");
       return;
     }
     setFetchError(null);
-    setLoadedNovelId(novelIdInput.trim());
+    if (trimmed === loadedNovelId) {
+      // Same id as what's already loaded (e.g. retrying after a failed
+      // fetch) - setLoadedNovelId() would be a no-op since the value isn't
+      // actually changing, so re-fetch directly instead.
+      novel.reload();
+    } else {
+      setLoadedNovelId(trimmed);
+    }
   }
 
   return (
@@ -105,7 +113,7 @@ function App() {
             {novel.toc.length === 0 && (
               <section className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center dark:border-gray-600 dark:bg-gray-800">
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Enter a novel_id above and click "Fetch" to get started.
+                  {novel.loading ? "Fetching..." : 'Enter a novel_id above and click "Fetch" to get started.'}
                 </p>
               </section>
             )}

@@ -25,11 +25,25 @@ export function useNovelToc(novelId: string | null) {
       return;
     }
     let cancelled = false;
-    // Kicking off the fetch itself - there's no event to set these from instead.
+    // Kicking off the fetch itself - there's no event to set these from
+    // instead. Clearing the PREVIOUS novel's data here too (not just on
+    // success) matters: without it, switching from novel A to novel B shows
+    // (and lets you act on - e.g. Sync to Auto-Pilot) novel A's chapters for
+    // the moment before B's fetch resolves, under novel B's id.
     // oxlint-disable-next-line react/set-state-in-effect
     setLoading(true);
     // oxlint-disable-next-line react/set-state-in-effect
     setError(null);
+    // oxlint-disable-next-line react/set-state-in-effect
+    setToc([]);
+    // oxlint-disable-next-line react/set-state-in-effect
+    setVolumes([]);
+    // oxlint-disable-next-line react/set-state-in-effect
+    setNovelAuthor("");
+    // oxlint-disable-next-line react/set-state-in-effect
+    setNovelTitle(null);
+    // oxlint-disable-next-line react/set-state-in-effect
+    setSelectedIds(new Set());
     fetchToc(novelId)
       .then(({ chapters, volumes, novel_author, novel_title }) => {
         if (cancelled) {
@@ -55,6 +69,30 @@ export function useNovelToc(novelId: string | null) {
       cancelled = true;
     };
   }, [novelId]);
+
+  // Re-fetches from scratch for the SAME novelId (e.g. retrying after a
+  // failed fetch) - changing `novelId` itself only re-triggers the effect
+  // above when the value actually differs from before, so retrying the exact
+  // same id needs this instead.
+  async function reload() {
+    if (!novelId) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const { chapters, volumes, novel_author, novel_title } = await fetchToc(novelId);
+      setToc(chapters);
+      setVolumes(volumes);
+      setNovelAuthor(novel_author ?? "");
+      setNovelTitle(novel_title ?? null);
+      setSelectedIds(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const lockedChapters = useMemo(() => toc.filter((c) => c.locked), [toc]);
   const unlockedChapters = useMemo(() => toc.filter((c) => !c.locked), [toc]);
@@ -167,6 +205,7 @@ export function useNovelToc(novelId: string | null) {
     unlockedChapters,
     selectedIds,
     selectedChapters,
+    reload,
     retryUnresolved,
     setManualLink,
     forgetRecovered,
