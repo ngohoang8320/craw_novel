@@ -28,6 +28,7 @@ def fetch_toc(novel_id: str) -> TocResponse:
         chapters=result["chapters"],
         volumes=result["volumes"],
         novel_author=result["novel_author"],
+        novel_title=result["novel_title"],
     )
 
 

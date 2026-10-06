@@ -46,6 +46,7 @@ class TocResponse(BaseModel):
     chapters: list[Chapter]
     volumes: list[VolumeLabel] = []
     novel_author: str | None = None
+    novel_title: str | None = None
 
 
 class ContentItem(BaseModel):

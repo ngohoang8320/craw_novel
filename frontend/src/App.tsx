@@ -1,283 +1,43 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  buildEpub,
-  deleteCapture,
-  fetchCaptures,
-  fetchToc,
-  forgetRecoveredLink,
-  setManualChapterLink,
-} from "./api/client";
-import { CaptureImportPanel } from "./components/CaptureImportPanel";
-import { ChapterList } from "./components/ChapterList";
+import { useState } from "react";
+import { BatchQueuePanel } from "./components/BatchQueuePanel";
+import { Button } from "./components/Button";
 import { ConfirmDialog } from "./components/ConfirmDialog";
-import { CrawlResultsList } from "./components/CrawlResultsList";
-import { EpubBuildPanel } from "./components/EpubBuildPanel";
-import { LockedChaptersPanel } from "./components/LockedChaptersPanel";
 import { NovelIdForm } from "./components/NovelIdForm";
-import { SelectedChapterLinks } from "./components/SelectedChapterLinks";
+import { NovelWorkspace } from "./components/NovelWorkspace";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { useConfirmDialog } from "./hooks/useConfirmDialog";
+import { useNovelToc } from "./hooks/useNovelToc";
 import { useTheme } from "./hooks/useTheme";
-import { buildGroupDisplayNumbers, coverUrlForTitle, groupByVolume, type VolumeGroup } from "./lib/volumeGrouping";
-import type { CapturedChapter, Chapter, CrawlResult, VolumeLabel } from "./types";
+import { clearAutopilotChain, syncAutopilotQueue } from "./lib/autopilotBridge";
 
 const DEFAULT_NOVEL_ID = import.meta.env.VITE_DEFAULT_NOVEL_ID ?? "";
 
 function App() {
-  const [novelId, setNovelId] = useState(DEFAULT_NOVEL_ID);
-  // The novel_id the currently-loaded toc/captures/results actually belong to
-  // (set only on a successful fetch) - kept separate from `novelId` (the live
-  // input box value) so editing the input after fetching doesn't send API
-  // calls for the wrong (or empty) novel_id.
-  const [loadedNovelId, setLoadedNovelId] = useState("");
-  const [toc, setToc] = useState<Chapter[]>([]);
-  const [volumes, setVolumes] = useState<VolumeLabel[]>([]);
-  const [novelAuthor, setNovelAuthor] = useState<string>("");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [fetchLoading, setFetchLoading] = useState(false);
+  const [view, setView] = useState<"single" | "batch">("single");
+  const [novelIdInput, setNovelIdInput] = useState(DEFAULT_NOVEL_ID);
+  // The novel_id the workspace below is actually loaded for - kept separate
+  // from `novelIdInput` (the live input box value) so editing the input
+  // after fetching doesn't send API calls for the wrong (or empty) novel_id.
+  const [loadedNovelId, setLoadedNovelId] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [captures, setCaptures] = useState<CapturedChapter[]>([]);
-  const [results, setResults] = useState<Record<string, CrawlResult>>({});
 
   const { dialogState, confirm, closeDialog } = useConfirmDialog();
   const { theme, toggleTheme } = useTheme();
+  const novel = useNovelToc(loadedNovelId);
 
-  const lockedChapters = useMemo(() => toc.filter((c) => c.locked), [toc]);
-  const unlockedChapters = useMemo(() => toc.filter((c) => !c.locked), [toc]);
-  const selectedChapters = useMemo(
-    () => unlockedChapters.filter((c) => selectedIds.has(c.chapter_id)),
-    [unlockedChapters, selectedIds],
-  );
-
-  async function handleFetchToc() {
-    if (!novelId.trim()) {
+  function handleFetchToc() {
+    if (!novelIdInput.trim()) {
       setFetchError("Please enter a novel_id.");
       return;
     }
-    setFetchLoading(true);
     setFetchError(null);
-    try {
-      const { chapters, volumes, novel_author } = await fetchToc(novelId.trim());
-      setLoadedNovelId(novelId.trim());
-      setToc(chapters);
-      setVolumes(volumes);
-      setNovelAuthor(novel_author ?? "");
-      setSelectedIds(new Set());
-      setCaptures([]);
-      setResults({});
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setFetchLoading(false);
-    }
-  }
-
-  // Re-runs the table-of-contents fetch IN PLACE - unlike "Fetch", it keeps
-  // the selection, captured status and imported results. Links recovered on
-  // earlier fetches are remembered by the backend, so this only retries the
-  // chapters that are still unresolved (and can only add links, never lose
-  // one).
-  async function handleRetryUnresolved() {
-    const { chapters, volumes, novel_author } = await fetchToc(loadedNovelId);
-    setToc(chapters);
-    setVolumes(volumes);
-    setNovelAuthor(novel_author ?? "");
-  }
-
-  async function handleSetManualLink(chapter: Chapter, link: string) {
-    // Same extraction the backend does (last number before an optional _page /
-    // .html) - used only to catch a link that duplicates another chapter
-    // before it gets remembered; the backend still validates the link itself.
-    const idMatch = link.match(/(\d+)(?:_\d+)?(?:\.html)?\/?\s*$/);
-    if (idMatch && toc.some((c) => c.order !== chapter.order && c.chapter_id === idMatch[1])) {
-      throw new Error("Another chapter in this table of contents already uses that link.");
-    }
-    const { chapter_id, url } = await setManualChapterLink(loadedNovelId, chapter.order, chapter.title, link);
-    setToc((prev) =>
-      prev.map((c) =>
-        c.order === chapter.order ? { ...c, chapter_id, url, locked: false, recovered: true } : c,
-      ),
-    );
-  }
-
-  // Discards a recovered/manual link: the chapter goes back to unresolved
-  // (Retry or a manual link can then redo it). Captured data already saved
-  // for that chapter_id is left alone.
-  async function handleForgetRecovered(chapter: Chapter) {
-    try {
-      await forgetRecoveredLink(loadedNovelId, chapter.chapter_id);
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    setToc((prev) =>
-      prev.map((c) =>
-        c.chapter_id === chapter.chapter_id
-          ? { ...c, chapter_id: `unresolved_${c.order}`, url: null, locked: true, recovered: false }
-          : c,
-      ),
-    );
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(chapter.chapter_id);
-      return next;
-    });
-  }
-
-  function toggleChapter(chapterId: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(chapterId)) {
-        next.delete(chapterId);
-      } else {
-        next.add(chapterId);
-      }
-      return next;
-    });
-  }
-
-  function selectAll() {
-    setSelectedIds(new Set(unlockedChapters.map((c) => c.chapter_id)));
-  }
-
-  function deselectAll() {
-    setSelectedIds(new Set());
-  }
-
-  function selectGroup(chapterIds: string[]) {
-    setSelectedIds((prev) => new Set([...prev, ...chapterIds]));
-  }
-
-  function deselectGroup(chapterIds: string[]) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of chapterIds) {
-        next.delete(id);
-      }
-      return next;
-    });
-  }
-
-  const selectedIdsKey = selectedChapters.map((c) => c.chapter_id).join(",");
-  const captureRequestRef = useRef(0);
-
-  const refreshCaptures = useCallback(() => {
-    const requestId = ++captureRequestRef.current;
-    if (selectedChapters.length === 0) {
-      setCaptures([]);
-      return;
-    }
-    fetchCaptures(loadedNovelId, selectedChapters.map((c) => c.chapter_id)).then(
-      ({ chapters: captured }) => {
-        // Ignore this response if a newer refresh was triggered meanwhile
-        // (e.g. focus + selection change firing close together).
-        if (requestId === captureRequestRef.current) {
-          setCaptures(captured);
-        }
-      },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedNovelId, selectedIdsKey]);
-
-  // Re-check capture status whenever the selection (or novel) changes.
-  useEffect(() => {
-    refreshCaptures();
-  }, [refreshCaptures]);
-
-  // The extension captures content in a separate browser tab (the chapter
-  // page on bilinovel.com), so nothing here knows a new capture landed until
-  // we ask again. Refresh whenever the user switches back to this tab.
-  useEffect(() => {
-    function handleFocus() {
-      refreshCaptures();
-    }
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [refreshCaptures]);
-
-  function handleImport() {
-    setResults((prev) => {
-      const next = { ...prev };
-      for (const chapter of selectedChapters) {
-        const captured = captures.find((c) => c.chapter_id === chapter.chapter_id);
-        if (!captured || !captured.captured) {
-          continue;
-        }
-        next[chapter.chapter_id] = {
-          chapter_id: chapter.chapter_id,
-          order: chapter.order,
-          title: chapter.title,
-          page_count: captured.page_count ?? 0,
-          total_pages: captured.total_pages ?? null,
-          is_complete: captured.is_complete ?? false,
-          missing_pages: captured.missing_pages ?? [],
-          paragraph_count: captured.paragraph_count ?? 0,
-          image_count: captured.image_count ?? 0,
-          char_count: captured.char_count ?? 0,
-          items: captured.items ?? [],
-          error: null,
-        };
-      }
-      return next;
-    });
-  }
-
-  // Deletes the captured data file(s) on the backend AND removes them from
-  // this app's state - used by the single "✕" per chapter, and by
-  // "Delete selected"/"Delete all" in Crawl results for re-crawling chapters
-  // whose capture came out wrong (e.g. a broken image) - all three are the
-  // same destructive action, just at different scopes.
-  async function handleDeleteChapters(chapterIds: string[]) {
-    await Promise.all(chapterIds.map((id) => deleteCapture(loadedNovelId, id)));
-    setResults((prev) => {
-      const next = { ...prev };
-      for (const id of chapterIds) {
-        delete next[id];
-      }
-      return next;
-    });
-    setCaptures((prev) => prev.filter((c) => !chapterIds.includes(c.chapter_id)));
-  }
-
-  async function handleDeleteChapter(chapterId: string) {
-    await handleDeleteChapters([chapterId]);
-  }
-
-  const resultGroups = useMemo(
-    () => groupByVolume(Object.values(results).filter((r) => !r.error), volumes),
-    [results, volumes],
-  );
-
-  // Single source of truth for per-group chapter numbering, computed from the
-  // FULL toc (locked and unlocked alike) so every panel - Table of contents,
-  // Unresolved, Crawl results - shows the same number for the same chapter,
-  // and a locked chapter's true position within its group isn't hidden.
-  const displayNumbers = useMemo(() => buildGroupDisplayNumbers(toc, volumes), [toc, volumes]);
-
-  async function handleBuildEpub(author: string, groupsToBuild: VolumeGroup<CrawlResult>[]) {
-    for (const g of groupsToBuild) {
-      const title = g.title ?? loadedNovelId;
-      const chapters = g.items.map((r) => ({ title: r.title, order: r.order, items: r.items }));
-
-      const coverUrl = coverUrlForTitle(g.title, volumes);
-      const blob = await buildEpub(loadedNovelId, title, author, chapters, coverUrl);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${title}.epub`;
-      link.click();
-      URL.revokeObjectURL(url);
-
-      // Small delay so the browser doesn't throttle/block several automatic
-      // downloads triggered back-to-back from one click.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
+    setLoadedNovelId(novelIdInput.trim());
   }
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-900 dark:bg-slate-900 dark:text-gray-100">
       <header className="relative border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-        <div className="mx-auto max-w-4xl px-6 py-5 text-center">
+        <div className="mx-auto max-w-6xl px-6 py-5 text-center">
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Bilinovel → EPUB Crawler</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Internal tool for building offline EPUBs from crawled chapters.
@@ -288,115 +48,68 @@ function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl space-y-4 p-6">
-        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <NovelIdForm
-            novelId={novelId}
-            onNovelIdChange={setNovelId}
-            onFetch={handleFetchToc}
-            loading={fetchLoading}
-            error={fetchError}
-          />
-        </section>
+      <div className="mx-auto flex max-w-6xl gap-2 px-6 pt-4">
+        <Button variant={view === "single" ? "primary" : "secondary"} onClick={() => setView("single")}>
+          Single novel
+        </Button>
+        <Button variant={view === "batch" ? "primary" : "secondary"} onClick={() => setView("batch")}>
+          Batch queue
+        </Button>
+      </div>
 
-        {toc.length > 0 && (
+      <main className="mx-auto max-w-6xl space-y-4 p-6">
+        {view === "batch" && (
+          <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <BatchQueuePanel confirm={confirm} />
+          </section>
+        )}
+
+        {view === "single" && (
           <>
             <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                  Table of contents{" "}
-                  <span className="font-normal text-gray-400 dark:text-gray-500">({toc.length} chapters)</span>
-                </h2>
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                  {selectedChapters.length}/{unlockedChapters.length} selected
-                </span>
-              </div>
-
-              <div className="grid grid-cols-[3fr_1fr] gap-4">
-                <ChapterList
-                  chapters={unlockedChapters}
-                  volumes={volumes}
-                  displayNumbers={displayNumbers}
-                  selectedIds={selectedIds}
-                  onToggle={toggleChapter}
-                  onSelectAll={selectAll}
-                  onDeselectAll={deselectAll}
-                  onSelectGroup={selectGroup}
-                  onDeselectGroup={deselectGroup}
-                  onForgetRecovered={(chapter) =>
-                    confirm({
-                      message: `Discard the recovered link for "${chapter.title}"? It goes back to Unresolved - use Retry to recover it again, or enter its link by hand. Any content already captured for it stays on disk.`,
-                      onConfirm: () => handleForgetRecovered(chapter),
-                      confirmLabel: "Discard link",
-                      danger: true,
-                    })
-                  }
-                />
-                <LockedChaptersPanel
-                  chapters={lockedChapters}
-                  volumes={volumes}
-                  displayNumbers={displayNumbers}
-                  onRetry={handleRetryUnresolved}
-                  onSetLink={handleSetManualLink}
-                />
-              </div>
-
-              {lockedChapters.length > 0 && (
-                <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-                  {lockedChapters.length} chapters excluded (unresolved link) - use Retry, or enter the link by hand
-                  (🔗), in the Unresolved panel.
-                </p>
-              )}
-
-              <div className="mt-3">
-                <SelectedChapterLinks chapters={selectedChapters} volumes={volumes} displayNumbers={displayNumbers} />
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-              <CaptureImportPanel
-                novelId={loadedNovelId}
-                selectedChapters={selectedChapters}
-                volumes={volumes}
-                displayNumbers={displayNumbers}
-                captures={captures}
-                onImport={handleImport}
-                onRefresh={refreshCaptures}
+              <NovelIdForm
+                novelId={novelIdInput}
+                onNovelIdChange={setNovelIdInput}
+                onFetch={handleFetchToc}
+                loading={novel.loading}
+                error={fetchError ?? novel.error}
               />
             </section>
 
-            <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-              <CrawlResultsList
-                results={Object.values(results)}
-                volumes={volumes}
-                displayNumbers={displayNumbers}
-                onDeleteAll={() => handleDeleteChapters(Object.keys(results))}
-                onDeleteSelected={handleDeleteChapters}
-                onDelete={handleDeleteChapter}
+            {novel.toc.length > 0 && (
+              <NovelWorkspace
+                novelId={loadedNovelId ?? ""}
+                toc={novel.toc}
+                volumes={novel.volumes}
+                novelAuthor={novel.novelAuthor}
+                lockedChapters={novel.lockedChapters}
+                unlockedChapters={novel.unlockedChapters}
+                selectedIds={novel.selectedIds}
+                selectedChapters={novel.selectedChapters}
+                onToggle={novel.toggleChapter}
+                onSelectAll={novel.selectAll}
+                onDeselectAll={novel.deselectAll}
+                onSelectGroup={novel.selectGroup}
+                onDeselectGroup={novel.deselectGroup}
+                onRetryUnresolved={novel.retryUnresolved}
+                onSetManualLink={novel.setManualLink}
+                onForgetRecovered={novel.forgetRecovered}
                 confirm={confirm}
+                onSyncAutopilot={() => {
+                  clearAutopilotChain();
+                  syncAutopilotQueue(loadedNovelId ?? "", novel.selectedChapters);
+                }}
               />
-            </section>
+            )}
 
-            {resultGroups.length > 0 && (
-              <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                <EpubBuildPanel
-                  groups={resultGroups}
-                  volumes={volumes}
-                  fallbackTitle={loadedNovelId}
-                  defaultAuthor={novelAuthor}
-                  onBuild={handleBuildEpub}
-                />
+            {novel.toc.length === 0 && (
+              <section className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center dark:border-gray-600 dark:bg-gray-800">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Enter a novel_id above and click "Fetch" to get started.
+                </p>
               </section>
             )}
           </>
-        )}
-
-        {toc.length === 0 && (
-          <section className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center dark:border-gray-600 dark:bg-gray-800">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Enter a novel_id above and click "Fetch" to get started.
-            </p>
-          </section>
         )}
       </main>
 

@@ -19,6 +19,7 @@ export interface TocResponse {
   chapters: Chapter[];
   volumes: VolumeLabel[];
   novel_author: string | null;
+  novel_title: string | null;
 }
 
 export interface ContentItem {

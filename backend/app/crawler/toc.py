@@ -121,6 +121,17 @@ def _extract_novel_author(soup: BeautifulSoup) -> str | None:
     return text or None
 
 
+def _extract_novel_title(soup: BeautifulSoup) -> str | None:
+    """Extract the novel's title from the catalog page's book info block
+    (`<h1 class="... book-title ...">Title</h1>`). Returns None if the
+    element isn't present."""
+    el = soup.select_one(".book-title")
+    if el is None:
+        return None
+    text = el.get_text(strip=True)
+    return text or None
+
+
 def _chapter_id_from_href(href: str) -> str:
     raw = href.rstrip("/").split("/")[-1].removesuffix(".html")
     # href may point to a specific page of a multi-page chapter, e.g. "281554_2"
@@ -281,6 +292,8 @@ def get_table_of_contents(novel_id: str) -> dict:
                 - cover_url (str, or None if the volume has no cover image).
             - "novel_author": str or None - the novel's author, from the
               catalog page's book info block (None if not present).
+            - "novel_title": str or None - the novel's title, from the
+              catalog page's book info block (None if not present).
 
     Raises:
         ValueError: novel_id is empty.
@@ -412,5 +425,11 @@ def get_table_of_contents(novel_id: str) -> dict:
     toc_cache.remember(novel_id, newly_recovered)
 
     novel_author = _extract_novel_author(soup)
+    novel_title = _extract_novel_title(soup)
 
-    return {"chapters": chapters, "volumes": volumes, "novel_author": novel_author}
+    return {
+        "chapters": chapters,
+        "volumes": volumes,
+        "novel_author": novel_author,
+        "novel_title": novel_title,
+    }

@@ -1,27 +1,29 @@
 import { Button } from "./Button";
-import { syncAutopilotQueue } from "../lib/autopilotBridge";
 import { formatPageRanges } from "../lib/pageRanges";
 import { groupByVolume } from "../lib/volumeGrouping";
 import type { CapturedChapter, Chapter, VolumeLabel } from "../types";
 
 interface CaptureImportPanelProps {
-  novelId: string;
   selectedChapters: Chapter[];
   volumes: VolumeLabel[];
   displayNumbers: Map<string, number>;
   captures: CapturedChapter[];
   onImport: () => void;
   onRefresh: () => void;
+  /** Sends the selected chapters (in order) to the Auto-Pilot extension.
+   * Left to the caller so it can decide whether to also clear/keep a Batch
+   * queue chain (see `autopilotBridge.ts`). */
+  onSyncAutopilot: () => void;
 }
 
 export function CaptureImportPanel({
-  novelId,
   selectedChapters,
   volumes,
   displayNumbers,
   captures,
   onImport,
   onRefresh,
+  onSyncAutopilot,
 }: CaptureImportPanelProps) {
   const capturedCount = captures.filter((c) => c.captured).length;
   const completeCount = captures.filter((c) => c.captured && c.is_complete).length;
@@ -91,7 +93,7 @@ export function CaptureImportPanel({
           🔄 Refresh captured status
         </Button>
         <Button
-          onClick={() => syncAutopilotQueue(novelId, selectedChapters)}
+          onClick={onSyncAutopilot}
           disabled={selectedChapters.length === 0}
           title="Sends the selected chapters (in order) to the Auto-Pilot extension, which then automatically advances pages/chapters after the capture extension saves each one. Requires extension-autopilot to be loaded."
         >

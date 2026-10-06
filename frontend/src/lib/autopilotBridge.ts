@@ -25,3 +25,32 @@ export function syncAutopilotQueue(novelId: string, chapters: Chapter[]): void {
     }),
   );
 }
+
+export const AUTOPILOT_CHAIN_EVENT = "bilinovel-autopilot-chain";
+
+export interface AutopilotChainEntry {
+  novel_id: string;
+  // null while this novel's own TOC fetch/sync (from the Batch queue view)
+  // hasn't finished yet - Auto-Pilot waits for it to show up instead of
+  // giving up, so finishing an earlier, fast novel never races ahead of a
+  // later one that's still being fetched.
+  url: string | null;
+}
+
+/** Tells Auto-Pilot the order to move through several novels' queues - once a
+ * novel's own queue finishes, it opens the next entry's `url` (that novel's
+ * first synced chapter) automatically instead of just stopping. Pass the
+ * full chain every time it changes (including entries not synced yet, with
+ * `url: null`) - it replaces whatever was stored before. Used by the Batch
+ * queue view - a plain single-novel sync should call `clearAutopilotChain()`
+ * instead, so it never inherits a leftover chain from an earlier batch run. */
+export function syncAutopilotChain(chain: AutopilotChainEntry[]): void {
+  document.dispatchEvent(new CustomEvent(AUTOPILOT_CHAIN_EVENT, { detail: { chain } }));
+}
+
+/** Clears any batch chain Auto-Pilot is holding, so finishing this novel's
+ * queue just stops instead of jumping to a novel queued in an earlier batch
+ * run. */
+export function clearAutopilotChain(): void {
+  syncAutopilotChain([]);
+}

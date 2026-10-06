@@ -4,14 +4,22 @@
 // the same chapter) or the next chapter in the synced queue (skipping over
 // any chapter the user didn't select). Does nothing on a page whose chapter
 // isn't in the synced queue, so manual browsing/capturing is never affected.
+//
+// Once a novel's own queue finishes, it also checks `batch_chain` (set by the
+// web app's Batch queue view via webapp_bridge.js) for the next novel to
+// start - letting several novels queued from the batch view run back-to-back
+// without opening each one's first chapter by hand.
 (function () {
   const CAPTURE_READY_EVENT = "bilinovel-capture-ready"; // dispatched by the capture extension
   const NEXTURL_EVENT = "bilinovel-autopilot-nexturl";
   const REQUEST_NEXTURL_EVENT = "bilinovel-autopilot-request-nexturl";
+  const BATCH_CHAIN_KEY = "batch_chain";
   const MIN_DELAY_MS = 1500;
   const MAX_DELAY_MS = 2500;
   const CAPTURE_TIMEOUT_MS = 15000;
   const NEXTURL_TIMEOUT_MS = 5000;
+  const BATCH_CHAIN_POLL_INTERVAL_MS = 1000;
+  const BATCH_CHAIN_POLL_TIMEOUT_MS = 300000; // 5 minutes
 
   // Registered immediately, before any async storage reads below, so a
   // capture-ready event firing while we're still checking the queue isn't
@@ -152,6 +160,40 @@
     return null;
   }
 
+  // Called right after a novel's queue is marked "done". If that novel is
+  // part of a batch chain and has a next entry, navigates there to continue
+  // automatically; otherwise does nothing (same as before this existed).
+  //
+  // The next entry's `url` can be null for a short while: the Batch queue
+  // view pushes the chain's SHAPE (every queued novel, in order) as soon as
+  // processing starts, but fills in each entry's url only once THAT novel's
+  // own TOC fetch/sync finishes - which can easily still be running if this
+  // novel is short and finishes capturing fast. So this polls for a bit
+  // instead of giving up the instant it sees a not-yet-ready entry.
+  async function advanceToNextQueuedNovel(novelId) {
+    const deadline = Date.now() + BATCH_CHAIN_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const result = await chrome.storage.local.get(BATCH_CHAIN_KEY);
+      const chain = result[BATCH_CHAIN_KEY] || [];
+      const idx = chain.findIndex((entry) => entry.novel_id === novelId);
+      if (idx === -1) {
+        return; // this novel isn't (or is no longer) part of a chain
+      }
+      const next = chain[idx + 1];
+      if (!next) {
+        return; // this is the last novel in the chain
+      }
+      if (next.url) {
+        console.log(`[autopilot] novel ${novelId} finished - advancing to the next queued novel (${next.novel_id}).`);
+        window.location.href = next.url;
+        return;
+      }
+      console.log(`[autopilot] waiting for novel ${next.novel_id}'s queue to be ready...`);
+      await sleep(BATCH_CHAIN_POLL_INTERVAL_MS);
+    }
+    console.warn(`[autopilot] gave up waiting for the next queued novel after finishing ${novelId}.`);
+  }
+
   async function run() {
     const novelId = getNovelIdFromUrl();
     const chapterId = getChapterIdFromUrl();
@@ -181,6 +223,7 @@
       if (!nextEntry) {
         await setState(novelId, { status: "done" });
         console.log("[autopilot] queue finished (remaining chapters were already complete).");
+        await advanceToNextQueuedNovel(novelId);
         return;
       }
       await setState(novelId, { status: "running", currentChapterId: nextEntry.chapter_id, message: null });
@@ -239,6 +282,7 @@
     if (!nextEntry) {
       await setState(novelId, { status: "done" });
       console.log("[autopilot] queue finished.");
+      await advanceToNextQueuedNovel(novelId);
       return;
     }
 
